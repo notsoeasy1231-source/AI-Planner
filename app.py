@@ -49,19 +49,85 @@ def call_openai_itinerary(user_message: str) -> dict:
 
     # Allow local dev without API key via stub
     if not api_key:
-        # Create light variation so different prompts don't look identical
-        seed = abs(hash(user_message)) % 1000
-        duration = 3
-        m = re.search(r"(\d+)\s*(day|days)", user_message, flags=re.IGNORECASE)
-        if m:
-            duration = int(m.group(1))
-        budget = 10000
-        m2 = re.search(r"₹\s*([0-9,]+)", user_message)
-        if m2:
-            budget = int(m2.group(1).replace(",", ""))
+        # Parse a few things from the prompt to create variation
+        seed = abs(hash(user_message)) % 10_000
+        m_days = re.search(r"(\d+)\s*(day|days)", user_message, flags=re.IGNORECASE)
+        duration = int(m_days.group(1)) if m_days else 4
 
-        cities = ["Araku Valley", "Gokarna", "Tarkarli", "Munnar", "Coorg", "Rishikesh"]
-        destination = cities[seed % len(cities)]
+        m_budget = re.search(r"₹\s*([0-9,]+)", user_message)
+        budget = int(m_budget.group(1).replace(",", "")) if m_budget else 20000
+
+        # Try to infer start city
+        start_city = "Bengaluru"
+        m_city = re.search(r"starting from\s*([A-Za-z\s]+?)(\.|,|$)", user_message, flags=re.IGNORECASE)
+        if m_city:
+            start_city = m_city.group(1).strip()
+
+        vegetarian_friendly = bool(re.search(r"veg|vegetarian|pure veg", user_message, flags=re.IGNORECASE))
+
+        hill_stations = ["Coorg (Madikeri)", "Munnar", "Coorg", "Chikmagalur", "Nainital", "Darjeeling", "Kodaikanal", "Shillong"]
+        # Bias towards “peaceful hill station” vibe
+        destination_cycle = [
+            hill_stations[(seed + 0) % len(hill_stations)],
+            hill_stations[(seed + 1) % len(hill_stations)],
+            hill_stations[(seed + 2) % len(hill_stations)],
+            hill_stations[(seed + 3) % len(hill_stations)],
+        ]
+
+        # Split budget across categories (roughly)
+        # Make it feel higher-end by allocating more to stays + attractions
+        accom = int(budget * 0.45)
+        food = int(budget * 0.20)
+        local_transport = int(budget * 0.15)
+        attractions = int(budget * 0.10)
+        buffer = budget - (accom + food + local_transport + attractions)
+
+        # Create multi-day, multi-destination itinerary
+        itinerary = []
+        for d in range(1, duration + 1):
+            dest = destination_cycle[(d - 1) % len(destination_cycle)]
+            day_kind = [
+                ("arrival + gentle viewpoint", "morning"),
+                ("nature walk + panoramic views", "afternoon"),
+                ("café + heritage / viewpoints", "evening"),
+                ("scenic day trip + relaxed return", "morning"),
+            ][(seed + d) % 4]
+
+            title = f"{dest}: {day_kind[0].title()}"
+            # Ensure activities have the expected schema
+            activities = []
+            activities.append({"time": "morning", "text": f"Slow start: check-in / breakfast + short viewpoint drive near {dest}"})
+            activities.append({"time": "afternoon", "text": f"Nature experience: {('guided trail' if d % 2 == 0 else 'serene gardens')} + panoramic lookout"})
+            activities.append({"time": "evening", "text": "Comfort dinner at a curated veg place + relaxed sunset / stargazing spot"})
+
+            restaurants = [
+                {
+                    "name": "Curated Vegetarian Dining (highly recommended)",
+                    "budget_per_person_inr": max(350, int(food / max(duration, 1) / 2)),
+                }
+            ]
+
+            # Distribute per-day costs
+            estimated_cost = int(budget / max(duration, 1))
+
+            map_queries = [
+                f"{dest} scenic viewpoint",
+                f"{dest} nature walk trail",
+                f"{dest} vegetarian restaurant",
+            ]
+
+            itinerary.append(
+                {
+                    "day": d,
+                    "title": title,
+                    "destination": dest,
+                    "activities": activities,
+                    "restaurants": restaurants,
+                    "estimated_cost_inr": estimated_cost,
+                    "map_queries": map_queries,
+                    "weather_note": "If it rains, swap outdoor viewpoints/walks with indoor cafés, heritage spots, and scenic by-lane drives.",
+                }
+            )
 
         generated_at = datetime.now().isoformat() + "Z"
 
@@ -71,72 +137,24 @@ def call_openai_itinerary(user_message: str) -> dict:
                 "generated_at": generated_at,
             },
             "trip_summary": {
-                "start_city": "Hyderabad",
-                "duration_days": 3,
-                "budget_total_inr": 10000,
+                "start_city": start_city,
+                "duration_days": duration,
+                "budget_total_inr": budget,
                 "interests": ["relaxing", "scenic"],
-                "travel_style": "relaxed",
-                "vegetarian_friendly": True,
+                "travel_style": "high-end relaxed",
+                "vegetarian_friendly": vegetarian_friendly,
             },
-            "itinerary": [
-                {
-                    "day": 1,
-                    "title": "Scenic arrival + local food",
-                    "destination": "Araku Valley",
-                    "activities": [
-                        {"time": "morning", "text": "Travel to Araku and check-in"},
-                        {"time": "afternoon", "text": "Coffee plantation visit + viewpoint"},
-                        {"time": "evening", "text": "Local veg dinner and sunset spot"},
-                    ],
-                    "restaurants": [
-                        {"name": "Local Veg Restaurant (suggested)", "budget_per_person_inr": 400},
-                    ],
-                    "estimated_cost_inr": 3200,
-                    "map_queries": ["Araku Valley coffee plantation viewpoint"],
-                    "weather_note": "Use forecast for rain/heat and adjust outdoor stops.",
-                },
-                {
-                    "day": 2,
-                    "title": "Waterfalls + culture",
-                    "destination": "Araku Valley",
-                    "activities": [
-                        {"time": "morning", "text": "Waterfalls + scenic walk"},
-                        {"time": "afternoon", "text": "Tribal museum / local crafts"},
-                        {"time": "evening", "text": "Café stop with local snacks"},
-                    ],
-                    "restaurants": [
-                        {"name": "Veg Café (suggested)", "budget_per_person_inr": 500},
-                    ],
-                    "estimated_cost_inr": 3500,
-                    "map_queries": ["Araku waterfalls viewpoint"],
-                    "weather_note": "If raining, swap to museum/café blocks.",
-                },
-                {
-                    "day": 3,
-                    "title": "Morning viewpoints + departure",
-                    "destination": "Araku Valley",
-                    "activities": [
-                        {"time": "morning", "text": "Sunrise viewpoint"},
-                        {"time": "afternoon", "text": "Last-minute shopping + check-out"},
-                        {"time": "evening", "text": "Return journey"},
-                    ],
-                    "restaurants": [
-                        {"name": "Quick Veg Lunch (suggested)", "budget_per_person_inr": 300},
-                    ],
-                    "estimated_cost_inr": 2800,
-                    "map_queries": ["Araku Valley sunrise viewpoint"],
-                    "weather_note": "Pack light rain protection if forecast shows showers.",
-                },
-            ],
+            "itinerary": itinerary,
             "budget_breakdown": {
-                "accommodation_inr": 3000,
-                "transport_local_inr": 2500,
-                "food_inr": 1400,
-                "attractions_inr": 600,
-                "buffer_inr": 2000,
-                "total_estimated_inr": 10000,
+                "accommodation_inr": accom,
+                "transport_local_inr": local_transport,
+                "food_inr": food,
+                "attractions_inr": attractions,
+                "buffer_inr": buffer,
+                "total_estimated_inr": budget,
             },
         }
+
 
     client = OpenAI(api_key=api_key)
 
