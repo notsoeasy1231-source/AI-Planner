@@ -49,10 +49,26 @@ def call_openai_itinerary(user_message: str) -> dict:
 
     # Allow local dev without API key via stub
     if not api_key:
+        # Create light variation so different prompts don't look identical
+        seed = abs(hash(user_message)) % 1000
+        duration = 3
+        m = re.search(r"(\d+)\s*(day|days)", user_message, flags=re.IGNORECASE)
+        if m:
+            duration = int(m.group(1))
+        budget = 10000
+        m2 = re.search(r"₹\s*([0-9,]+)", user_message)
+        if m2:
+            budget = int(m2.group(1).replace(",", ""))
+
+        cities = ["Araku Valley", "Gokarna", "Tarkarli", "Munnar", "Coorg", "Rishikesh"]
+        destination = cities[seed % len(cities)]
+
+        generated_at = datetime.now().isoformat() + "Z"
+
         return {
             "meta": {
                 "mode": "stub",
-                "generated_at": datetime.utcnow().isoformat() + "Z",
+                "generated_at": generated_at,
             },
             "trip_summary": {
                 "start_city": "Hyderabad",
